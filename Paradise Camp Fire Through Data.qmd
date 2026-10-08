@@ -1,0 +1,14 @@
+---
+title: "Paradise Camp Fire Through Data"
+author: "Johnny Maldonado"
+format: html
+editor: visual
+---
+
+## Introduction
+
+My interest in natural disasters, including my earlier exploration of landslides, led me to this topic. After watching a documentary about the Camp Fire in Paradise, California, I wanted to use three datasets to tell a story about conditions before the fire and its aftermath.
+
+I plan to use U.S. Drought Monitor data on weekly dry conditions in Butte County, NOAA monthly rainfall data for the county, and NIST’s Camp Fire structure damage summary. These datasets store drought categories, months, or damage categories across separate columns. Using tidyr and dplyr, I will reshape them into long format, standardize variable names, and document any missing or inconsistent values.
+
+I will analyze each dataset separately to examine how abnormal dryness changed before the fire, how rainfall compared with earlier years, and how damage differed by structure type. Together, these analyses will provide context for the disaster without claiming to establish its cause.
