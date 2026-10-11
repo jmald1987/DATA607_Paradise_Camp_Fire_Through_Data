@@ -1,14 +1,470 @@
 ---
 title: "Paradise Camp Fire Through Data"
 author: "Johnny Maldonado"
-format: html
+format:
+  html:
+    toc: true
+    embed-resources: true
+    code-fold: true
+    code-summary: "Show R code"
+execute:
+  message: false
 editor: visual
 ---
 
 ## Introduction
 
-My interest in natural disasters, including my earlier exploration of landslides, led me to this topic. After watching a documentary about the Camp Fire in Paradise, California, I wanted to use three datasets to tell a story about conditions before the fire and its aftermath.
+My interest in natural disasters, including my earlier exploration of landslides, led me to this topic. After watching a documentary about the Camp Fire in Paradise, California, I wanted to look at the conditions before the fire and the damage afterward.
 
-I plan to use U.S. Drought Monitor data on weekly dry conditions in Butte County, NOAA monthly rainfall data for the county, and NIST’s Camp Fire structure damage summary. These datasets store drought categories, months, or damage categories across separate columns. Using tidyr and dplyr, I will reshape them into long format, standardize variable names, and document any missing or inconsistent values.
+I am using three datasets: the Camp Fire damage assessment, U.S. Drought Monitor data, and NOAA precipitation data for Butte County. Each has values spread across columns that I will move into rows using tidyr. I will use dplyr to clean and summarize the data.
 
-I will analyze each dataset separately to examine how abnormal dryness changed before the fire, how rainfall compared with earlier years, and how damage differed by structure type. Together, these analyses will provide context for the disaster without claiming to establish its cause.
+I want to see which structures had the most damage, how dry the county was before the fire, and how precipitation in 2018 compared with earlier years. I am looking at each dataset separately. These comparisons give some background on the fire, but they cannot tell us what caused it.
+
+## Packages and files
+
+All three datasets are read from the public GitHub repository. An internet connection is needed to render the report.
+
+```{r load-packages}
+# tidyr changes the shape of the tables.
+library(tidyr)
+# dplyr selects rows and columns and calculates summaries.
+library(dplyr)
+# ggplot2 makes the graphs.
+library(ggplot2)
+# kable() from knitr displays readable tables.
+library(knitr)
+
+```
+
+```{r file-locations}
+# Read all three CSV files directly from GitHub.
+damage_file <- "https://raw.githubusercontent.com/jmald1987/DATA607_Paradise_Camp_Fire_Through_Data/main/camp_fire_damage_assessment.csv"
+drought_file <- "https://raw.githubusercontent.com/jmald1987/DATA607_Paradise_Camp_Fire_Through_Data/main/dm_export_20180101_20181106.csv"
+rain_file <- "https://raw.githubusercontent.com/jmald1987/DATA607_Paradise_Camp_Fire_Through_Data/main/noaa_butte_precipitation_wide.csv"
+```
+
+
+## 1. Camp Fire damage
+
+**My question:** Which structure types had the most destroyed structures, and what percentage of each type was destroyed?
+
+### The original data
+
+This was my dataset for Discussion 5A. The CSV comes from the table titled "Camp Fire Damage Assessment Summary." I am using the screenshot to check the numbers. The related NIST report is [A Case Study of the Camp Fire: Fire Progression Timeline](https://doi.org/10.6028/NIST.TN.2135).
+
+There are six types of structures. The damage categories are affected (1% to 9%), minor (10% to 25%), major (26% to 50%), and destroyed (over 50%). Each category has its own column, so this is wide data.
+
+The table's notes say the categories follow FEMA guidelines. "Other" includes uninhabitable structures such as detached garages and sheds larger than 11 square meters (120 square feet). Infrastructure includes communications towers, water supply equipment, and bridges.
+
+```{r read-damage-data}
+# The first four lines contain the title and headers.
+readLines(damage_file, n = 4)
+
+# skip = 4 leaves out the title and stacked headers.
+# header = FALSE means I supply the column names myself.
+damage_raw <- read.csv(
+  damage_file,
+  skip = 4,
+  header = FALSE,
+  col.names = c("structure_type", "affected", "minor", "major", "destroyed", "total"),
+  na.strings = c("", "NA")
+)
+
+dim(damage_raw)
+names(damage_raw)
+# Show the whole table because this dataset is small.
+kable(damage_raw)
+```
+
+The imported table has 7 rows and 6 columns. One row contains the totals.
+
+### Cleaning the data
+
+I gave the columns lowercase names during import. I also remove the quotation marks around "Other." I remove the total row and column before pivoting so the structures are not counted twice.
+
+```{r clean-damage-data}
+# mutate() changes a column; gsub() removes the quote characters.
+# trimws() removes spaces at the beginning or end of a label.
+# filter() keeps rows. != means "not equal to".
+damage_clean <- damage_raw |>
+  mutate(structure_type = gsub('"', '', structure_type)) |>
+  mutate(structure_type = trimws(structure_type)) |>
+  filter(structure_type != "Total")
+
+```
+
+```{r check-damage-totals}
+# Add the four counts and compare the result with the published total.
+# TRUE in matches_total means the numbers agree.
+damage_clean |>
+  mutate(calculated_total = affected + minor + major + destroyed,
+         matches_total = calculated_total == total) |>
+  select(structure_type, total, calculated_total, matches_total) |>
+  kable()
+
+```
+
+Each structure type currently has four damage columns. After the pivot, those four columns become four rows. For example, Single Residence becomes one row each for affected, minor, major, and destroyed.
+
+```{r make-damage-long}
+# select(-total) removes the total column.
+# cols chooses the columns to stack into rows.
+# names_to holds their old column names; values_to holds their counts.
+damage_long <- damage_clean |>
+  select(-total) |>
+  pivot_longer(
+    cols = affected:destroyed,
+    names_to = "damage_level",
+    values_to = "structures"
+  )
+
+sum(is.na(damage_long$structures))
+dim(damage_long)
+kable(head(damage_long, 8))
+```
+
+There are no missing damage counts, so I did not fill in or remove any values. Zeros mean no structures were listed for that combination. There are now 24 rows, one for each structure type and damage level.
+
+### Looking at the damage
+
+I add up the counts for each damage level, then calculate the percentage destroyed within each structure type. Both calculations use the long data.
+
+```{r summarize-damage}
+# group_by() puts matching damage levels together.
+# summarise() gives one total for each group.
+damage_totals <- damage_long |>
+  group_by(damage_level) |>
+  summarise(structures = sum(structures))
+
+kable(damage_totals)
+sum(damage_totals$structures)
+
+```
+
+```{r total-each-structure-type}
+# Find the denominator: all listed structures of each type.
+type_totals <- damage_long |>
+  group_by(structure_type) |>
+  summarise(total_listed = sum(structures))
+
+```
+
+```{r count-destroyed-structures}
+# Keep only destroyed rows, then give the count a clearer name.
+destroyed <- damage_long |>
+  filter(damage_level == "destroyed") |>
+  rename(destroyed_count = structures) |>
+  select(structure_type, destroyed_count)
+
+```
+
+The percentage is destroyed structures divided by all listed structures of the same type, multiplied by 100. I match the tables by structure type so the numerator and denominator belong together.
+
+```{r calculate-destroyed-percent}
+# left_join() adds the destroyed count to the matching structure type.
+# arrange(desc()) puts the largest destroyed count first.
+damage_summary <- left_join(type_totals, destroyed, by = "structure_type") |>
+  mutate(percent_destroyed = 100 * destroyed_count / total_listed) |>
+  arrange(desc(destroyed_count))
+
+kable(damage_summary, digits = 2,
+      col.names = c("Structure type", "Total listed", "Destroyed", "Destroyed (%)"))
+```
+
+```{r plot-damage}
+#| fig-width: 8
+#| fig-height: 5
+# geom_col() makes bars using the counts already calculated.
+# coord_flip() makes the bars horizontal so the labels fit.
+ggplot(damage_summary, aes(x = structure_type, y = destroyed_count)) +
+  geom_col(fill = "tomato3") +
+  coord_flip() +
+  labs(title = "Destroyed structures by type",
+       x = "Structure type", y = "Number destroyed") +
+  theme_minimal()
+```
+
+### What I found
+
+The total is 19,558 structures, which matches the original table. Of those, 18,804 were destroyed, or about 96.14%. Single residences had the largest destroyed count at 13,696. About 96.55% of the single residences in this table were destroyed.
+
+
+These percentages only describe the structures in the damage table. There is no undamaged category, so I cannot calculate the percentage of all buildings in the area that were destroyed.
+
+## 2. Drought Monitor data
+
+**My question:** How did the percentage of Butte County classified as abnormally dry change before the fire?
+
+### The original data
+
+The second dataset is from the [U.S. Drought Monitor download page](https://droughtmonitor.unl.edu/DmData/DataDownload/ComprehensiveStatistics.aspx). It contains weekly data for Butte County. The columns `None` and `D0` through `D4` give the percentage of county area in each category.
+
+The file has `StatisticFormatID = 2`. According to the [documentation](https://droughtmonitor.unl.edu/DmData/DataDownload/WebServiceInfo.aspx), this means the categories are separate rather than cumulative. Also, [D0 means abnormally dry](https://droughtmonitor.unl.edu/About/AbouttheData/DroughtClassification.aspx). Drought categories begin at D1.
+
+```{r read-drought-data}
+# Keep FIPS as text so that 06007 keeps its first zero.
+drought_raw <- read.csv(
+  drought_file,
+  colClasses = c(MapDate = "character", FIPS = "character"),
+  na.strings = c("", "NA")
+)
+
+dim(drought_raw)
+names(drought_raw)
+kable(head(drought_raw))
+```
+
+The file has 46 rows and 13 columns. The categories are spread across six columns, which is what I will change.
+
+### Cleaning the data
+
+I rename the columns, convert the dates, and filter for Butte County in 2018 through November 6. One map is dated December 26, 2017, even though its coverage runs into January. I leave it in the raw file but remove it from the analysis.
+
+```{r clean-drought-data}
+# as.Date() changes the text into dates R can compare.
+drought_clean <- drought_raw |>
+  rename(
+    date = MapDate, fips = FIPS, county = County, state = State,
+    none = None, d0 = D0, d1 = D1, d2 = D2, d3 = D3, d4 = D4,
+    valid_start = ValidStart, valid_end = ValidEnd,
+    statistic_format = StatisticFormatID
+  ) |>
+  mutate(
+    date = as.Date(date, format = "%Y%m%d"),
+    valid_start = as.Date(valid_start),
+    valid_end = as.Date(valid_end)
+  ) |>
+  filter(fips == "06007",
+         date >= as.Date("2018-01-01"),
+         date <= as.Date("2018-11-06"))
+
+```
+
+```{r make-drought-long}
+# Stack the six category columns into two columns.
+# Each date now has one row per category.
+drought_long <- drought_clean |>
+  pivot_longer(
+    cols = none:d4,
+    names_to = "category",
+    values_to = "area_percent"
+  ) |>
+  arrange(date)
+
+sum(is.na(drought_long$area_percent))
+dim(drought_long)
+kable(head(drought_long))
+
+```
+
+```{r check-weekly-percentages}
+# Add the six categories for each date.
+# range() shows the smallest and largest weekly totals.
+# Both should be 100 because the categories do not overlap.
+weekly_check <- drought_long |>
+  group_by(date) |>
+  summarise(total_percent = sum(area_percent))
+
+range(weekly_check$total_percent)
+```
+
+There are no missing percentages. I keep zeros because they mean none of the county was in that category. There are now 270 rows: 45 weeks with six categories per week.
+
+### Looking at dry conditions
+
+I count how many weekly maps show some area in each category. I also calculate the average and highest percentage. The average is across weekly maps, not across people or individual days.
+
+```{r summarize-drought}
+# Count weeks above zero and find the average and maximum area.
+drought_summary <- drought_long |>
+  group_by(category) |>
+  summarise(
+    weeks_present = sum(area_percent > 0),
+    average_percent = mean(area_percent),
+    highest_percent = max(area_percent)
+  )
+
+kable(drought_summary, digits = 2,
+      col.names = c("Category", "Weeks above 0%", "Average area (%)", "Highest area (%)"))
+
+```
+
+```{r select-abnormally-dry-data}
+# Keep D0 for the graph. The summary above still includes all categories.
+d0_data <- drought_long |>
+  filter(category == "d0")
+```
+
+```{r plot-drought}
+#| fig-width: 8
+#| fig-height: 4
+# A line graph shows how the percentage changes over time.
+# The y-axis measures county area, not people.
+ggplot(d0_data, aes(x = date, y = area_percent)) +
+  geom_line(color = "darkorange3") +
+  labs(title = "Butte County area classified as abnormally dry (D0)",
+       x = "Date in 2018", y = "County area (%)") +
+  theme_minimal()
+```
+
+### What I found
+
+D0 covered 100% of the county on `r sum(d0_data$area_percent == 100)` of the 45 weekly maps. On November 6, the last date in the file, the whole county was classified as D0. D1 through D4 were zero throughout the selected period.
+
+This shows abnormal dryness before the fire, but not a D1 or higher drought classification. The graph also shows that dry conditions were not the same throughout the year. These county percentages cannot tell us the conditions at a specific house or location.
+
+
+## 3. Butte County precipitation
+
+**My question:** Was precipitation in 2018 lower than the average for earlier years?
+
+### The original data
+
+The third dataset is from [NOAA's county precipitation file](https://www.ncei.noaa.gov/monitoring-content/data/us/climdiv/monthly/current/climdiv-pcpncy-v1.0.0-20261006), using the October 6, 2026 release. The [README](https://www.ncei.noaa.gov/monitoring-content/data/us/climdiv/monthly/current/county-readme.txt) explains the layout and units.
+
+The NOAA CSV contains all 132 annual Butte County records, from 1895 through 2026. Each month is still a separate column. Other counties were left out, but all years and monthly values for Butte were kept. The CSV keeps the original identifier and the twelve monthly values from each Butte County record.
+
+The identifier combines the state code, county code, measurement type, and year. In this NOAA file, `04` means California, `007` means Butte County, and `01` means precipitation. These state codes differ from Census FIPS codes.
+
+```{r read-rain-data}
+rain_raw <- read.csv(
+  rain_file,
+  colClasses = c(record_id = "character"),
+  na.strings = c("", "NA")
+)
+
+dim(rain_raw)
+names(rain_raw)
+kable(head(rain_raw))
+```
+
+### Cleaning the data
+
+I use `substr()` to separate the parts of the identifier. Then I move January through December into a month column and a precipitation column. The unit is inches. NOAA uses `-9.99` for missing precipitation, so I change that to `NA`. A zero stays zero.
+
+```{r clean-rain-data}
+# substr() reads a specific part of the identifier.
+# For 04007012018, positions 8 through 11 give 2018.
+rain_clean <- rain_raw |>
+  mutate(
+    state_code = substr(record_id, 1, 2),
+    county_code = substr(record_id, 3, 5),
+    element_code = substr(record_id, 6, 7),
+    year = as.integer(substr(record_id, 8, 11))
+  )
+
+kable(head(rain_clean, 3))
+```
+
+```{r make-rain-long}
+# Jan:Dec selects the twelve monthly columns.
+# na_if() replaces only -9.99 with NA; it keeps actual zeros.
+# factor() keeps the months in calendar order instead of alphabetical order.
+rain_long <- rain_clean |>
+  pivot_longer(
+    cols = Jan:Dec,
+    names_to = "month",
+    values_to = "precip_inches"
+  ) |>
+  mutate(
+    precip_inches = na_if(precip_inches, -9.99),
+    month = factor(month, levels = month.abb)
+  ) |>
+  arrange(year, month)
+
+dim(rain_long)
+kable(head(rain_long))
+
+```
+
+```{r check-missing-rain}
+# Keep the missing rows and count how many occur in each year.
+rain_long |>
+  filter(is.na(precip_inches)) |>
+  count(year) |>
+  kable()
+```
+
+The tidy data have one row per year and month. Missing months in the latest year stay as `NA`. They are not needed for the comparison below. I check that the years I do use have no missing values.
+
+### Comparing 2018 with earlier years
+
+I use 1981 through 2010 as a 30-year comparison period. For each month, I calculate the average precipitation in those years and compare it with the same month in 2018.
+
+```{r compare-rainfall}
+# Keep the comparison years in one table and 2018 in another.
+rain_history <- rain_long |>
+  filter(year >= 1981, year <= 2010)
+
+rain_2018 <- rain_long |>
+  filter(year == 2018)
+
+sum(is.na(rain_history$precip_inches))
+sum(is.na(rain_2018$precip_inches))
+
+```
+
+```{r average-rain-by-month}
+# Average all January values together, all February values, and so on.
+# There are 30 observations for each month in 1981 through 2010.
+monthly_average <- rain_history |>
+  group_by(month) |>
+  summarise(average_inches = mean(precip_inches))
+
+```
+
+```{r match-rain-by-month}
+# Join by month so January 2018 is compared with the January average.
+# A negative difference means 2018 had less precipitation.
+rain_comparison <- rain_2018 |>
+  select(month, precip_inches) |>
+  left_join(monthly_average, by = "month") |>
+  mutate(difference = precip_inches - average_inches)
+
+kable(rain_comparison, digits = 2,
+      col.names = c("Month", "2018 (inches)", "1981–2010 average (inches)", "Difference (inches)"))
+```
+
+```{r plot-rainfall}
+#| fig-width: 8
+#| fig-height: 4
+# Each geom_line() draws one of the two comparison lines.
+ggplot(rain_comparison, aes(x = month, group = 1)) +
+  geom_line(aes(y = precip_inches, color = "2018")) +
+  geom_line(aes(y = average_inches, color = "1981–2010 average")) +
+  labs(title = "Monthly precipitation in Butte County",
+       x = "Month", y = "Precipitation (inches)", color = "Period") +
+  theme_minimal()
+```
+
+For a pre-fire total, I only use January through October. The fire began on November 8, so the full November total would include precipitation after it started. The graph includes November and December only to show the rest of the year.
+
+```{r rain-before-fire}
+# Leave out November and December, then add the remaining months.
+before_fire <- rain_comparison |>
+  filter(month != "Nov", month != "Dec") |>
+  summarise(
+    total_2018 = sum(precip_inches),
+    average_total = sum(average_inches)
+  ) |>
+  mutate(percent_of_average = 100 * total_2018 / average_total)
+
+kable(before_fire, digits = 2,
+      col.names = c("Jan–Oct 2018 (inches)", "Jan–Oct average (inches)", "Percent of average"))
+```
+
+### What I found
+
+January through October 2018 had `r round(before_fire$total_2018, 2)` inches of precipitation. The average for those months in 1981–2010 was `r round(before_fire$average_total, 2)` inches. That puts 2018 at about `r round(before_fire$percent_of_average, 1)`% of the earlier average.
+
+June through September 2018 had just 0.03 inches combined. The graph shows that summer is also dry in the comparison period, so low summer precipitation by itself is not enough to call a year unusual. These are county averages and monthly totals. They cannot show the exact weather in Paradise on the day of the fire. Precipitation also includes water from snow, rather than only rain.
+
+
+## Conclusion
+
+The damage table showed that single residences had the most destroyed structures. The drought data showed widespread abnormal dryness before the fire, with no D1 through D4 classifications in the selected weeks. The precipitation data showed that January through October 2018 was below the 1981–2010 average.
+
+For all three datasets, moving columns into rows made it easier to group the data and calculate summaries. The totals in the damage table needed to be kept out of the pivot, the drought dates needed filtering, and the NOAA missing-value code needed to be changed to `NA`. These were different cleaning steps even though all three datasets used `pivot_longer()`.
+
+These results give some context for the Camp Fire, but they do not prove that the dry conditions caused it or explain why a particular structure was destroyed.
+
