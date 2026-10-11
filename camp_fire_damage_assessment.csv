@@ -1,0 +1,11 @@
+﻿Camp Fire Damage Assessment Summary,,,,,
+,,,,,
+,Affected,Minor,Major,Destroyed,
+Category of Damage,(1% to 9%),(10% to 25%),(26% to 50%),(>50%),Total
+Single Residence,439,47,3,13696,14185
+Multiple Residence,21,3,1,276,301
+Mixed Commercial/Residential,1,1,0,11,13
+Non-residential Commercial,76,18,8,528,630
+"""Other"" Minor Structures",87,32,13,4286,4418
+Infrastructure,2,0,2,7,11
+Total,626,101,27,18804,19558
